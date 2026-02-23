@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import *
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+# --- SERIALIZADOR DE TOKEN (JWT CUSTOM) ---
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         # 1. Django espera 'username', nosotros le pasamos el 'email'
@@ -20,11 +21,13 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        # Esto lo dejamos igual por seguridad (dentro del token)
+        # Esto lo dejamos igual por seguridad (dentro del token payload)
         token['rol'] = user.rol 
         token['email'] = user.email
         return token
     
+
+# --- SERIALIZADORES DE MODELOS ---
 
 class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
@@ -41,18 +44,50 @@ class RecursoSerializer(serializers.ModelSerializer):
         model = Recurso
         fields = ['id', 'estado']
 
-# serializers.py en Django
-class SolicitudSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Solicitud
-        fields = ['id', 'usuario', 'alumno', 'recurso', 'motivo', 'estado', 'fecha_solicitud']
-
 class DetalleSolicitudSerializer(serializers.ModelSerializer):
+    """
+    Serializador para el modelo intermedio. 
+    Se mantiene para el ViewSet independiente de detalles.
+    """
     class Meta:
         model = DetalleSolicitud
-        fields = '__all__'
+        fields = ['id', 'solicitud', 'recurso']
+
+class SolicitudSerializer(serializers.ModelSerializer):
+    """
+    Serializador de Solicitud actualizado para mostrar una lista 
+    de recursos en lugar de uno solo.
+    """
+    # 'recursos' utiliza el related_name='detalles' definido en el modelo DetalleSolicitud
+    recursos = serializers.SlugRelatedField(
+        many=True,
+        read_only=True,
+        slug_field='recurso_id', # Muestra el ID del recurso (ej: 'L-01')
+        source='detalles'        # Origen de los datos
+    )
+
+    class Meta:
+        model = Solicitud
+        # Importante: se eliminó 'recurso' y se agregó 'recursos'
+        fields = [
+            'id', 
+            'usuario', 
+            'alumno', 
+            'recursos', 
+            'motivo', 
+            'estado', 
+            'fecha_solicitud'
+        ]
 
 class PrestamoSerializer(serializers.ModelSerializer):
+    solicitud = SolicitudSerializer(read_only=True)
+
     class Meta:
         model = Prestamo
-        fields = '__all__'
+        fields = [
+            'id', 
+            'solicitud', 
+            'fecha_entrega', 
+            'fecha_devolucion', 
+            'estado'
+        ]

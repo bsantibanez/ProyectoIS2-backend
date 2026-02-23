@@ -1,7 +1,12 @@
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
-from rest_framework_simplejwt.authentication import JWTAuthentication # Importación correcta
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet, DateTimeFilter, CharFilter
+from django.db import transaction 
+from django.utils import timezone  # Necesario para timezone.now()
+
 from .models import *
 from .serializers import *
 from .serializers import MyTokenObtainPairSerializer
@@ -21,6 +26,17 @@ class IsAutoridadAcademica(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.rol == 1
 
+# --- FILTROS ---
+class PrestamoFilter(FilterSet):
+    # Definimos rangos para las fechas
+    fecha_desde = DateTimeFilter(field_name="fecha_entrega", lookup_expr='gte')
+    fecha_hasta = DateTimeFilter(field_name="fecha_entrega", lookup_expr='lte')
+    alumno_rut = CharFilter(field_name="solicitud__alumno__rut", lookup_expr='icontains')
+
+    class Meta:
+        model = Prestamo
+        fields = ['estado', 'fecha_desde', 'fecha_hasta', 'alumno_rut']
+
 # --- VIEWSETS ---
 
 class UsuarioViewSet(viewsets.ModelViewSet):
@@ -32,7 +48,6 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 class AlumnoViewSet(viewsets.ModelViewSet):
     queryset = Alumno.objects.all()
     serializer_class = AlumnoSerializer
-    # Usamos JWT para evitar el error 'AttributeError: Token'
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
@@ -48,14 +63,95 @@ class SolicitudViewSet(viewsets.ModelViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
-class DetalleSolicitudViewSet(viewsets.ModelViewSet):
-    queryset = DetalleSolicitud.objects.all()
-    serializer_class = DetalleSolicitudSerializer
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    # --- MÉTODO PARA CREAR (Se mantiene tu lógica original) ---
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        with transaction.atomic():
+            try:
+                alumno_instancia = Alumno.objects.get(rut=data.get('alumno'))
+                usuario_instancia = Usuario.objects.get(id=data.get('usuario'))
+            except (Alumno.DoesNotExist, Usuario.DoesNotExist) as e:
+                return Response({"error": "Alumno o Usuario no encontrado"}, status=status.HTTP_400_BAD_REQUEST)
+
+            solicitud = Solicitud.objects.create(
+                alumno=alumno_instancia,
+                usuario=usuario_instancia,
+                motivo=data.get('motivo', ''),
+                estado='Pendiente'
+            )
+            
+            recursos_ids = data.get('recursos', [])
+            if not recursos_ids:
+                transaction.set_rollback(True) 
+                return Response({"error": "Debe seleccionar al menos un recurso"}, status=status.HTTP_400_BAD_REQUEST)
+
+            for r_id in recursos_ids:
+                recurso_obj = Recurso.objects.get(id=r_id)
+                DetalleSolicitud.objects.create(solicitud=solicitud, recurso=recurso_obj)
+                recurso_obj.estado = 'En Solicitud'
+                recurso_obj.save()
+
+            serializer = self.get_serializer(solicitud)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # --- APROBAR Y CREAR PRÉSTAMO ---
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        nuevo_estado = request.data.get('estado')
+
+        with transaction.atomic():
+            if nuevo_estado == 'Aprobada' and instance.estado != 'Aprobada':
+                Prestamo.objects.create(
+                    solicitud=instance,
+                    fecha_entrega=timezone.now(),
+                    estado='En Curso'
+                )
+                
+                detalles = DetalleSolicitud.objects.filter(solicitud=instance)
+                for detalle in detalles:
+                    recurso = detalle.recurso
+                    recurso.estado = 'En Préstamo'
+                    recurso.save()
+
+            return super().partial_update(request, *args, **kwargs)
 
 class PrestamoViewSet(viewsets.ModelViewSet):
     queryset = Prestamo.objects.all()
     serializer_class = PrestamoSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    # Integración de Filtros
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = PrestamoFilter
+
+    def get_queryset(self):
+        # Optimizamos la consulta para traer datos del alumno y solicitud en un solo viaje
+        return Prestamo.objects.select_related('solicitud', 'solicitud__alumno').all()
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        nuevo_estado = request.data.get('estado')
+
+        if nuevo_estado == 'Finalizado':
+            with transaction.atomic():
+                instance.fecha_devolucion = timezone.now()
+                instance.estado = 'Finalizado'
+                instance.save()
+                
+                # Liberar recursos y actualizar solicitud
+                detalles = DetalleSolicitud.objects.filter(solicitud=instance.solicitud)
+                for d in detalles:
+                    d.recurso.estado = 'Disponible'
+                    d.recurso.save()
+                
+                instance.solicitud.estado = 'Finalizada'
+                instance.solicitud.save()
+
+        return super().partial_update(request, *args, **kwargs)
+
+class DetalleSolicitudViewSet(viewsets.ModelViewSet):
+    queryset = DetalleSolicitud.objects.all()
+    serializer_class = DetalleSolicitudSerializer
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]

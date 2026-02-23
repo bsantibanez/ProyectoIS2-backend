@@ -33,7 +33,6 @@ class Solicitud(models.Model):
     ESTADOS = (('Pendiente', 'Pendiente'), ('Aprobada', 'Aprobada'), ('Rechazada', 'Rechazada'))
     usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE) # El ayudante que la crea
     alumno = models.ForeignKey(Alumno, on_delete=models.CASCADE)
-    recurso = models.ForeignKey(Recurso, on_delete=models.CASCADE) # <--- EL EQUIPO
     fecha_solicitud = models.DateTimeField(auto_now_add=True)
     estado = models.CharField(max_length=20, choices=ESTADOS, default='Pendiente')
     motivo = models.TextField()
