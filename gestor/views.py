@@ -1,3 +1,5 @@
+from urllib import request
+
 from rest_framework import viewsets, permissions, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -5,7 +7,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet, DateTimeFilter, CharFilter
 from django.db import transaction 
-from django.utils import timezone  # Necesario para timezone.now()
+from django.utils import timezone
+from urllib3 import request  # Necesario para timezone.now()
 
 from .models import *
 from .serializers import *
@@ -100,6 +103,9 @@ class SolicitudViewSet(viewsets.ModelViewSet):
         nuevo_estado = request.data.get('estado')
 
         with transaction.atomic():
+            # 1. Definimos los detalles ANTES de los IF para que ambos casos los vean
+            detalles = DetalleSolicitud.objects.filter(solicitud=instance)
+
             if nuevo_estado == 'Aprobada' and instance.estado != 'Aprobada':
                 Prestamo.objects.create(
                     solicitud=instance,
@@ -107,13 +113,23 @@ class SolicitudViewSet(viewsets.ModelViewSet):
                     estado='En Curso'
                 )
                 
-                detalles = DetalleSolicitud.objects.filter(solicitud=instance)
                 for detalle in detalles:
                     recurso = detalle.recurso
                     recurso.estado = 'En Préstamo'
                     recurso.save()
+                    
+            elif nuevo_estado == 'Rechazada':
+                # 2. Ahora 'detalles' sí existe aquí
+                for detalle in detalles:
+                    recurso = detalle.recurso
+                    recurso.estado = 'Disponible'
+                    recurso.save()
 
-            return super().partial_update(request, *args, **kwargs)
+            # 3. No olvides guardar el nuevo estado de la solicitud misma
+            instance.estado = nuevo_estado
+            instance.save()
+
+        return super().partial_update(request, *args, **kwargs)
 
 class PrestamoViewSet(viewsets.ModelViewSet):
     queryset = Prestamo.objects.all()
