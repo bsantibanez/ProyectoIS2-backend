@@ -66,7 +66,7 @@ class SolicitudViewSet(viewsets.ModelViewSet):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
-    # --- MÉTODO PARA CREAR (Se mantiene tu lógica original) ---
+    # --- MÉTODO PARA CREAR 
     def create(self, request, *args, **kwargs):
         data = request.data
         with transaction.atomic():
@@ -80,7 +80,9 @@ class SolicitudViewSet(viewsets.ModelViewSet):
                 alumno=alumno_instancia,
                 usuario=usuario_instancia,
                 motivo=data.get('motivo', ''),
-                estado='Pendiente'
+                estado='Pendiente',
+                fecha_entrega=data.get('fecha_entrega')
+                
             )
             
             recursos_ids = data.get('recursos', [])
@@ -107,9 +109,10 @@ class SolicitudViewSet(viewsets.ModelViewSet):
             detalles = DetalleSolicitud.objects.filter(solicitud=instance)
 
             if nuevo_estado == 'Aprobada' and instance.estado != 'Aprobada':
+                instance.fecha_respuesta = timezone.now()
                 Prestamo.objects.create(
                     solicitud=instance,
-                    fecha_entrega=timezone.now(),
+                    fecha_inicio=timezone.now(),
                     estado='En Curso'
                 )
                 

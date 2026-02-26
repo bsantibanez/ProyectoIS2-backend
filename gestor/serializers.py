@@ -14,6 +14,8 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         # 3. AGREGAMOS EL ROL AQUÍ (Esto es lo que Angular leerá como res.rol)
         data['rol'] = self.user.rol 
         data['email'] = self.user.email
+        data['first_name'] = self.user.first_name 
+        data['last_name'] = self.user.last_name   
         data['user_id'] = self.user.id
         
         return data
@@ -22,7 +24,9 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     def get_token(cls, user):
         token = super().get_token(user)
         # Esto lo dejamos igual por seguridad (dentro del token payload)
-        token['rol'] = user.rol 
+        token['rol'] = user.rol
+        token['name'] = user.first_name
+        token['last_name'] = user.last_name
         token['email'] = user.email
         return token
     
@@ -68,7 +72,6 @@ class SolicitudSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Solicitud
-        # Importante: se eliminó 'recurso' y se agregó 'recursos'
         fields = [
             'id', 
             'usuario', 
@@ -76,7 +79,9 @@ class SolicitudSerializer(serializers.ModelSerializer):
             'recursos', 
             'motivo', 
             'estado', 
-            'fecha_solicitud'
+            'fecha_creacion',
+            'fecha_entrega',
+
         ]
 
 class PrestamoSerializer(serializers.ModelSerializer):
@@ -87,7 +92,7 @@ class PrestamoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 
             'solicitud', 
-            'fecha_entrega', 
+            'fecha_inicio', 
             'fecha_devolucion', 
             'estado'
         ]
